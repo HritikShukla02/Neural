@@ -2,20 +2,25 @@
 import numpy as np
 
 class Neural:
-    def __init__(self, layers_sizes:list, activations:list, cost:str):
+    def __init__(self,input_size:int, layers_sizes:list, activations:list, cost:str):
         
         self.layers = layers_sizes
         self.acts = activations
         self.cost = cost
+        self.input_size = input_size
+        
         # self.params = self.parameters()
+        self.params = self.parameters(self.input_size)
+
+
 
     def parameters(self, input_size):
         params = {}
         for i in range(len(self.layers)):
             if i == 0:
-                params[f'W{i}'] = np.random.randn(self.layers[i], input_size)*0.01
+                params[f'W{i}'] = np.random.randn(self.layers[i], input_size)*np.sqrt(1/input_size)
             else:
-                params[f'W{i}'] = np.random.randn(self.layers[i], self.layers[i-1])*0.01
+                params[f'W{i}'] = np.random.randn(self.layers[i], self.layers[i-1])*np.sqrt(1/self.layers[i-1])
 
             params[f'b{i}'] =np.zeros((self.layers[i], 1))
 
@@ -50,6 +55,7 @@ class Neural:
             cache.append(c)
         return cache, A
     
+
     def cost_calc(self, loss, A, Y, m):
         if loss=="CCE":
             if self.acts[-1] == 'sigmoid':
@@ -57,12 +63,26 @@ class Neural:
             elif self.acts[-1] == 'softmax':
                  # Avoid log(0) by adding a small epsilon
                 epsilon = 1e-9
-                pred = np.clip(pred, epsilon, 1 - epsilon)  
+                A_clipped = np.clip(A, epsilon, 1 - epsilon)  
 
-                cost = -np.sum(Y * np.log(pred)) / m
-                
-        return cost
+                cost = -np.sum(Y * np.log(A_clipped)) / m
+        
+        if self.reg_lambda is not None:        
+            # Compute L2 Regularization Term
+            L2_reg = 0
+            for i in range(len(self.layers)):  # Sum over all layers
+                W = self.params[f'W{i}']
+                L2_reg += np.sum(W**2)
+
+            L2_reg = (self.reg_lambda / (2 * m)) * L2_reg  # Apply L2 factor
+
+            return cost + L2_reg  # Add regularization term to cost
+        else:
+            return cost
     
+    def clip(self, mat, clip_val):
+        grads = np.clip(mat, -clip_val, clip_val)
+        return grads
 
     def backward(self, Y, pred, cache, alpha=0.01):
         dA=None
@@ -83,33 +103,38 @@ class Neural:
                     g = np.where(Z>=0,1, 0)
                 elif self.acts[i] == 'sigmoid':
                     g = A*(1-A)
-                dZ = dA * g.astype(int)
+                dZ = dA * g
                 
             # if loss_type == 'CCE':
             # derivatives[f'dz{i}'] = dZ
-            dW = np.dot(dZ, Aprev.T)/self.num_inputs
-            db = np.sum(dZ, axis=1 ,keepdims=True)/self.num_inputs
+            if self.reg_lambda is not None:
+                dW = self.clip(np.dot(dZ, Aprev.T)/self.num_inputs, 3) + (self.reg_lambda/(2 * self.num_inputs))*W
+            else:
+                dW = self.clip(np.dot(dZ, Aprev.T)/self.num_inputs, 3)
+
+            db = self.clip(np.sum(dZ, axis=1 ,keepdims=True)/self.num_inputs, 0.5)
 
             dA = np.dot(W.T, dZ)
 
-            self.params[f'W{i}'] -= alpha*dW
-            self.params[f'b{i}'] -= alpha*db
+            self.params[f'W{i}'] = self.clip(self.params[f'W{i}'] - alpha*dW, 5)
+            self.params[f'b{i}'] = self.clip(self.params[f'b{i}'] - alpha*db, 3)
 
 
     
 
-    def train(self, X_train, Y_train, epoch, learning_rate=0.01, X_dev=None, Y_dev=None,):
-        self.input_size = X_train.shape[0]
+    def train(self, X_train, Y_train, epoch, learning_rate=0.01, reg_lambda=None, X_dev=None, Y_dev=None,):
         self.num_inputs = X_train.shape[1]
+        self.reg_lambda = reg_lambda
         dev = False
         if X_dev is not None:
             dev_input_size = X_dev.shape[1]
             dev = True
 
 
-        self.params = self.parameters(self.input_size)
         J_hist = []
         dev_hist = []
+        dev_eval_hist =[]
+        train_eval_hist = []
         for i in range(epoch):
                 
             cache, pred =self.forward(X_train)
@@ -123,11 +148,15 @@ class Neural:
                 c, dev_pred = self.forward(X_dev)
                 dev_cost = self.cost_calc(loss='CCE', A=dev_pred, Y=Y_dev, m=dev_input_size)
                 dev_hist.append(dev_cost)
-                eval_percentage = self.evaluate(X_dev, Y_dev)
+                dev_eval_percentage = self.evaluate(X_dev, Y_dev)
+                dev_eval_hist.append(dev_eval_percentage)
+            train_eval = self.evaluate(X_train, Y_train)
+            train_eval_hist.append(train_eval)
+
             if (i == 0) or (i % 100 == 0) or (i == epoch):
-                print(f'epoch {i}: train cost {cost:.4f} | dev cost {dev_cost:.4f} | eval {eval_percentage:.4f}')
+                print(f'epoch {i}: train cost {cost:.4f} | dev cost {dev_cost:.4f} | train eval {train_eval:.4f} | dev eval {dev_eval_percentage:.4f}')
         if dev:
-            return J_hist, dev_hist
+            return J_hist, dev_hist, train_eval_hist, dev_eval_hist 
         else:
             return J_hist
 
@@ -138,7 +167,7 @@ class Neural:
     def evaluate(self, X, Y):
         pred = self.predict(X)
         total = np.sum(pred == Y)
-        eval_percentage = total/self.num_inputs*100
+        eval_percentage = total/X.shape[1]*100
         return eval_percentage
 
 
