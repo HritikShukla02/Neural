@@ -43,12 +43,17 @@ class Neural:
         return a
 
 
-    def forward(self, inputs):
+    def forward(self, inputs, k_prob=None):
         cache = []
         A = inputs
         for i in range(len(self.layers)):
             W = self.params[f'W{i}']
             b = self.params[f'b{i}']
+            if k_prob is not None:
+                keep_prob = k_prob[i]
+                drops = np.random.rand(A.shape[0], A.shape[1]) < keep_prob
+                A = np.multiply(A, drops)
+                A/= keep_prob
             Z = np.dot(W, A) + b
             c = {"W":W, 
                  "Aprev":A, 
@@ -265,7 +270,7 @@ class Neural:
         return learning_rate
     
 
-    def train(self, X_train, Y_train, epoch, learning_rate=0.01, optimizer="gd", batch_size=None, reg_lambda=None, X_dev=None, Y_dev=None, patience=None):
+    def train(self, X_train, Y_train, epoch, learning_rate=0.01, optimizer="gd", batch_size=None, reg_lambda=None, X_dev=None, Y_dev=None, patience=None, k_prob=None):
 
         self.reg_lambda = reg_lambda
         dev = False
@@ -328,7 +333,7 @@ class Neural:
             curr_lr = self.update_lr(learning_rate, i, decay_rate=1 )
             
             if dev:
-                c, dev_pred = self.forward(X_dev)
+                c, dev_pred = self.forward(X_dev, k_prob=k_prob)
                 dev_cost = self.cost_calc(loss='CCE', A=dev_pred, Y=Y_dev)
                 dev_eval_percentage = self.evaluate(X_dev, Y_dev)
 
